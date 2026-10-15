@@ -1,9 +1,5 @@
 > [!NOTE]
-> **Community-maintained Whispering 7.** Upstream Epicenter has rebuilt Whispering as a file-based voice-notes app without global shortcuts, push-to-talk, voice-activated recording, auto-paste, or on-device transcription. This fork keeps the 7.x dictation app working. It is not affiliated with Epicenter.
->
-> - **Download 7.12.0 and later** from [this fork's releases](https://github.com/samiralibabic/epicenter/releases/latest) (macOS, Apple Silicon). The download links and Homebrew cask further down install upstream's 7.11.0.
-> - **First launch:** the app is not notarized by Apple, so macOS blocks it once. Open **System Settings → Privacy & Security** and click **Open Anyway**, or run `xattr -dr com.apple.quarantine /Applications/Whispering.app`.
-> - **Upgrading from 7.11:** replace the app in `/Applications`. Settings and recordings carry over. 7.12.0 and later update themselves from this fork.
+> **Community-maintained Whispering 7.** This document is upstream's Whispering 7 README, kept for its feature and setup documentation. Downloads, first-launch steps, and upgrade notes for this repository are in the [main README](../../README.md). The download links and Homebrew cask below install upstream's 7.11.0, not this repository's releases.
 
 <p align="center">
   <a href="https://whispering.epicenterhq.com">
@@ -698,39 +694,39 @@ If the Command Line Tools are newer than Xcode (for example an Xcode 26 toolchai
 DEVELOPER_DIR=/Library/Developer/CommandLineTools bun tauri build --target aarch64-apple-darwin
 ```
 
-#### Releasing (fork maintainers)
+#### Releasing (maintainers)
 
-Releases are built locally on Apple Silicon and ad-hoc signed. The GitHub Actions workflows are disabled on this fork.
+Releases are built without CI: macOS on an Apple Silicon Mac, Linux and Windows in a throwaway Docker container on any x86_64 Linux host. Nothing is signed by Apple or Microsoft; the macOS app is ad-hoc signed. Updater artifacts are signed with the updater key, which stays on the maintainer's Mac at `~/.tauri/whispering-fork.key`.
 
-1. Bump the version from the repository root: `bun run bump-version X.Y.Z`, then commit.
-2. Build with the updater key (kept outside the repository, at `~/.tauri/whispering-fork.key`):
+1. Bump the version from the repository root with `bun run bump-version X.Y.Z`, then commit. Linux and Windows build from the committed tree.
+2. Build macOS for both architectures:
 
    ```bash
    cd apps/whispering
-   DEVELOPER_DIR=/Library/Developer/CommandLineTools \
-   TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/whispering-fork.key)" \
-   TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-   PATH="$(dirname "$(rustup which cargo)"):$PATH" \
-   bun tauri build --target aarch64-apple-darwin --bundles app,dmg
+   for target in aarch64-apple-darwin x86_64-apple-darwin; do
+   	DEVELOPER_DIR=/Library/Developer/CommandLineTools \
+   	TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/whispering-fork.key)" \
+   	TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+   	PATH="$(dirname "$(rustup which cargo)"):$PATH" \
+   	bun tauri build --target "$target" --bundles app,dmg
+   done
    ```
 
-3. From `src-tauri/target/aarch64-apple-darwin/release/bundle/`, upload the `.dmg`, the `macos/Whispering.app.tar.gz` (renamed `Whispering_X.Y.Z_aarch64.app.tar.gz`), and a `latest.json` to a GitHub release tagged `vX.Y.Z`:
+   The Intel target needs `rustup target add x86_64-apple-darwin` once.
 
-   ```json
-   {
-   	"version": "X.Y.Z",
-   	"notes": "…",
-   	"pub_date": "2026-01-01T00:00:00Z",
-   	"platforms": {
-   		"darwin-aarch64": {
-   			"signature": "<contents of Whispering.app.tar.gz.sig>",
-   			"url": "https://github.com/samiralibabic/epicenter/releases/download/vX.Y.Z/Whispering_X.Y.Z_aarch64.app.tar.gz"
-   		}
-   	}
-   }
+3. Build Linux (AppImage, deb, rpm) and Windows (NSIS installer, cross-compiled with `cargo-xwin`) on a Docker host. The script copies the committed source there, builds in `ubuntu:22.04`, fetches the bundles into `dist/linux-windows`, and removes everything from the host:
+
+   ```bash
+   apps/whispering/scripts/release/build-linux-windows.sh root@your-build-host 6 8g
    ```
 
-   Installed apps read `releases/latest/download/latest.json`, so the newest release must be a Whispering release.
+4. Sign the Linux and Windows updater artifacts and write `latest.json`. The script finishes by verifying every updater signature against the public key in `tauri.conf.json`:
+
+   ```bash
+   apps/whispering/scripts/release/prepare-release.sh "Short release summary"
+   ```
+
+5. Create a GitHub release tagged `vX.Y.Z` and upload everything in `apps/whispering/dist/release-vX.Y.Z`. Installed apps read `releases/latest/download/latest.json`, so the newest release must always be a Whispering release.
 
 ### Contributing
 
