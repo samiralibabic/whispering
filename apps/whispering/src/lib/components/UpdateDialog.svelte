@@ -73,14 +73,12 @@
 	import { marked } from 'marked';
 	import { extractErrorMessage } from 'wellcrafted/error';
 	import { Err, tryAsync } from 'wellcrafted/result';
+	import { WHISPERING_RELEASES_URL } from '$lib/constants/app';
 	import { rpc } from '$lib/query';
-
-	const GITHUB_RELEASES_URL =
-		'https://github.com/samiralibabic/epicenter/releases/tag';
 
 	function getGitHubReleaseUrl(version: string) {
 		const tag = version.startsWith('v') ? version : `v${version}`;
-		return `${GITHUB_RELEASES_URL}/${tag}`;
+		return `${WHISPERING_RELEASES_URL}/tag/${tag}`;
 	}
 
 	function renderMarkdown(markdown: string): string {

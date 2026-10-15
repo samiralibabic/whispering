@@ -5,6 +5,7 @@
 	import * as SectionHeader from '@epicenter/ui/section-header';
 	import { Separator } from '@epicenter/ui/separator';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import { WHISPERING_GITHUB_REPO } from '$lib/constants/app';
 	import { rpc } from '$lib/query';
 	import { deviceConfig } from '$lib/state/device-config.svelte';
 	import { settings } from '$lib/state/settings.svelte';
@@ -16,7 +17,7 @@
 		typeof value === 'string';
 	const versionPromise = (async () => {
 		const res = await fetch(
-			'https://api.github.com/repos/EpicenterHQ/epicenter/releases/latest',
+			`https://api.github.com/repos/${WHISPERING_GITHUB_REPO}/releases/latest`,
 		);
 		const { html_url: latestReleaseUrl, tag_name: latestVersion } =
 			await res.json();

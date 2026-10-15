@@ -10,7 +10,7 @@
 		"category": "Productivity",
 		"publisher": "Braden Wong",
 		"copyright": "Copyright © 2025 Braden Wong",
-		"homepage": "https://whispering.epicenter.so",
+		"homepage": "https://github.com/samiralibabic/whispering",
 		"targets": "all",
 		"icon": [
 			"icons/32x32.png",
@@ -48,13 +48,13 @@
 		}
 	},
 	"productName": "Whispering",
-	"version": "7.12.0",
+	"version": "7.12.1",
 	"identifier": "com.bradenwong.whispering",
 	"plugins": {
 		"updater": {
 			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQzQzk3RjdCRTBFRkZFOEEKUldTSy91L2dlMy9KUTN4cGMrYXRyQ2dycjNVVHB4V3hHL0M5ZWZRbU1Sbm1MRGJ2QXEvTnlYUlMK",
 			"endpoints": [
-				"https://github.com/samiralibabic/epicenter/releases/latest/download/latest.json"
+				"https://github.com/samiralibabic/whispering/releases/latest/download/latest.json"
 			]
 		}
 	},

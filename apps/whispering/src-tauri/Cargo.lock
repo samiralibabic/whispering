@@ -7036,7 +7036,7 @@ dependencies = [
 
 [[package]]
 name = "whispering"
-version = "7.12.0"
+version = "7.12.1"
 dependencies = [
  "accessibility-sys",
  "core-foundation-sys",

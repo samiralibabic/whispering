@@ -10,6 +10,7 @@
 	import { page } from '$app/state';
 	import { GithubIcon } from '$lib/components/icons';
 	import { notificationLog } from '$lib/components/NotificationLog.svelte';
+	import { WHISPERING_GITHUB_URL } from '$lib/constants/app';
 	import { NAV_ITEMS } from '$lib/constants/ui';
 	import MigrationDialog from '$lib/migration/MigrationDialog.svelte';
 	import { migrationDialog } from '$lib/migration/migration-dialog.svelte';
@@ -99,7 +100,7 @@
 				<Sidebar.MenuButton>
 					{#snippet child({ props })}
 						<a
-							href="https://github.com/EpicenterHQ/epicenter"
+							href={WHISPERING_GITHUB_URL}
 							target="_blank"
 							rel="noopener noreferrer"
 							{...props}

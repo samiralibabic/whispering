@@ -3,6 +3,7 @@
 	import * as Empty from '@epicenter/ui/empty';
 	import DesktopIcon from '@lucide/svelte/icons/laptop';
 	import { ChromeWebStoreIcon } from '$lib/components/icons';
+	import { WHISPERING_RELEASES_URL } from '$lib/constants/app';
 </script>
 
 <svelte:head> <title>Change Global Keyboard Shortcut</title> </svelte:head>
@@ -22,7 +23,7 @@
 		<div class="flex flex-col gap-2 md:flex-row">
 			<Button
 				tooltip="Check out the Chrome Extension"
-				href="https://github.com/EpicenterHQ/epicenter/releases"
+				href={WHISPERING_RELEASES_URL}
 				target="_blank"
 				rel="noopener noreferrer"
 				variant="default"

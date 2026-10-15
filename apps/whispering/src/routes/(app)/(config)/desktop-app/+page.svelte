@@ -7,6 +7,7 @@
 	import MicIcon from '@lucide/svelte/icons/mic';
 	import ZapIcon from '@lucide/svelte/icons/zap';
 	import { ChromeWebStoreIcon } from '$lib/components/icons';
+	import { WHISPERING_RELEASES_URL } from '$lib/constants/app';
 </script>
 
 <svelte:head> <title>Download Desktop App - Whispering</title> </svelte:head>
@@ -66,7 +67,7 @@
 			<div class="flex flex-col gap-3 sm:flex-row">
 				<Button
 					tooltip="Download Whispering Desktop App"
-					href="https://github.com/EpicenterHQ/epicenter/releases"
+					href={WHISPERING_RELEASES_URL}
 					target="_blank"
 					rel="noopener noreferrer"
 					variant="default"

@@ -2,7 +2,7 @@
 	"name": "epicenter",
 	"type": "module",
 	"private": true,
-	"version": "7.12.0",
+	"version": "7.12.1",
 	"description": "Local-first PKM substrate. CRDT-powered tables that materialize to SQLite and markdown.",
 	"keywords": [
 		"local-first",
@@ -28,8 +28,7 @@
 	"workspaces": {
 		"packages": [
 			"apps/*",
-			"packages/*",
-			"examples/*"
+			"packages/*"
 		],
 		"catalog": {
 			"@types/node": "^24.0.0",
@@ -112,8 +111,7 @@
 		"bench": "turbo run bench",
 		"bump-version": "bun run scripts/bump-version.ts",
 		"clean": "bun run scripts/clean.ts",
-		"nuke": "bun run scripts/clean.ts --nuke",
-		"epicenter": "EPICENTER_SERVER=http://localhost:8787 bun run --bun epicenter"
+		"nuke": "bun run scripts/clean.ts --nuke"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "catalog:",
