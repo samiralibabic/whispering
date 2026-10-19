@@ -24,3 +24,7 @@ Tauri + Svelte 5 desktop/web app for voice transcription.
 - Cross-cutting docs: `/docs/`
 
 See root `AGENTS.md` for the full organization guide.
+
+## Active Dictation Improvement Plan
+
+- See [`specs/20261019T191546-dictation-engine-modernization.md`](specs/20261019T191546-dictation-engine-modernization.md) before changing recording, transcription, transformations, vocabulary, or client/server boundaries. The spec includes verified baseline behavior, implementation slices, and acceptance tests.
