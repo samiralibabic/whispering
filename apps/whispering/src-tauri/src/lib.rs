@@ -10,6 +10,9 @@ use recorder::commands::{
 };
 
 pub mod dictation;
+use dictation::commands::{
+    cancel_dictation_session, finish_dictation_session, start_dictation_session, DictationState,
+};
 
 pub mod transcription;
 use transcription::{
@@ -133,7 +136,8 @@ pub async fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(AppData::new())
-        .manage(ModelManager::new());
+        .manage(ModelManager::new())
+        .manage(DictationState::default());
 
     #[cfg(desktop)]
     {
@@ -165,6 +169,10 @@ pub async fn run() {
         transcribe_audio_whisper,
         transcribe_audio_parakeet,
         transcribe_audio_moonshine,
+        // Streaming dictation
+        start_dictation_session,
+        finish_dictation_session,
+        cancel_dictation_session,
         send_sigint,
         // Command execution (prevents console window flash on Windows)
         execute_command,

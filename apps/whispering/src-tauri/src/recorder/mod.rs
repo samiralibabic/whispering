@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod recorder;
+pub mod tap;
 pub mod wav_writer;
 
 // Export everything from commands for easy access

@@ -1,3 +1,4 @@
+use crate::recorder::tap::{audio_tap, AudioTap, TapReader};
 use crate::recorder::wav_writer::WavWriter;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, Stream};
@@ -39,6 +40,8 @@ pub struct RecorderState {
     sample_rate: u32,
     channels: u16,
     file_path: Option<PathBuf>,
+    /// Reader for the streaming copy of this session's audio, until a dictation session takes it.
+    tap_reader: Option<TapReader>,
 }
 
 impl RecorderState {
@@ -51,7 +54,13 @@ impl RecorderState {
             sample_rate: 0,
             channels: 0,
             file_path: None,
+            tap_reader: None,
         }
+    }
+
+    /// Hands the streaming copy of the current session's audio to a dictation session.
+    pub fn take_tap_reader(&mut self) -> Option<TapReader> {
+        self.tap_reader.take()
     }
 
     /// List available recording devices by name
@@ -66,13 +75,15 @@ impl RecorderState {
         Ok(devices)
     }
 
-    /// Initialize recording session - creates stream and WAV writer
+    /// Initialize recording session - creates stream and WAV writer.
+    /// With `streaming`, the callback also copies audio into a tap for live dictation.
     pub fn init_session(
         &mut self,
         device_name: String,
         output_folder: PathBuf,
         recording_id: String,
         preferred_sample_rate: Option<u32>,
+        streaming: bool,
     ) -> Result<()> {
         // Clean up any existing session
         self.close_session()?;
@@ -106,6 +117,13 @@ impl RecorderState {
         self.is_recording = Arc::new(AtomicBool::new(false));
         let is_recording = self.is_recording.clone();
 
+        let (tap, tap_reader) = if streaming {
+            let (tap, reader) = audio_tap(sample_rate, channels, is_recording.clone());
+            (Some(tap), Some(reader))
+        } else {
+            (None, None)
+        };
+
         // Create command channel for worker thread
         let (cmd_tx, cmd_rx) = mpsc::channel();
 
@@ -122,6 +140,7 @@ impl RecorderState {
                 sample_format,
                 is_recording_clone,
                 writer_clone,
+                tap,
             ) {
                 Ok(s) => s,
                 Err(e) => {
@@ -168,10 +187,11 @@ impl RecorderState {
         self.sample_rate = sample_rate;
         self.channels = channels;
         self.file_path = Some(file_path);
+        self.tap_reader = tap_reader;
 
         info!(
-            "Recording session initialized: {} Hz, {} channels, file: {:?}",
-            sample_rate, channels, self.file_path
+            "Recording session initialized: {} Hz, {} channels, streaming: {}, file: {:?}",
+            sample_rate, channels, streaming, self.file_path
         );
 
         Ok(())
@@ -278,6 +298,7 @@ impl RecorderState {
         self.file_path = None;
         self.sample_rate = 0;
         self.channels = 0;
+        self.tap_reader = None;
 
         debug!("Recording session closed");
         Ok(())
@@ -418,6 +439,7 @@ fn build_input_stream(
     sample_format: SampleFormat,
     is_recording: Arc<AtomicBool>,
     writer: Arc<Mutex<WavWriter>>,
+    mut tap: Option<AudioTap>,
 ) -> Result<Stream> {
     let err_fn = |err| error!("Audio stream error: {}", err);
 
@@ -429,6 +451,9 @@ fn build_input_stream(
                     if is_recording.load(Ordering::Relaxed) {
                         if let Ok(mut w) = writer.lock() {
                             let _ = w.write_samples_f32(data);
+                        }
+                        if let Some(tap) = tap.as_mut() {
+                            tap.push_f32(data);
                         }
                     }
                 },
@@ -444,6 +469,9 @@ fn build_input_stream(
                         if let Ok(mut w) = writer.lock() {
                             let _ = w.write_samples_i16(data);
                         }
+                        if let Some(tap) = tap.as_mut() {
+                            tap.push_i16(data);
+                        }
                     }
                 },
                 err_fn,
@@ -457,6 +485,9 @@ fn build_input_stream(
                     if is_recording.load(Ordering::Relaxed) {
                         if let Ok(mut w) = writer.lock() {
                             let _ = w.write_samples_u16(data);
+                        }
+                        if let Some(tap) = tap.as_mut() {
+                            tap.push_u16(data);
                         }
                     }
                 },

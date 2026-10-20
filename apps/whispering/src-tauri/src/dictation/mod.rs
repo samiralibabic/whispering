@@ -12,8 +12,10 @@
 
 pub mod audio;
 pub mod chunker;
+pub mod commands;
 pub mod engines;
 pub mod pipeline;
+pub mod session;
 
 pub use chunker::{ChunkerConfig, CutReason};
 pub use pipeline::{

@@ -33,12 +33,13 @@ pub async fn init_recording_session(
     recording_id: String,
     output_folder: String,
     sample_rate: Option<u32>,
+    streaming: Option<bool>,
     state: State<'_, AppData>,
     _app_handle: tauri::AppHandle,
 ) -> Result<()> {
     info!(
-        "Initializing recording session: device={}, id={}, folder={}, sample_rate={:?}",
-        device_identifier, recording_id, output_folder, sample_rate
+        "Initializing recording session: device={}, id={}, folder={}, sample_rate={:?}, streaming={:?}",
+        device_identifier, recording_id, output_folder, sample_rate, streaming
     );
 
     // Use the provided output folder
@@ -63,7 +64,13 @@ pub async fn init_recording_session(
         .recorder
         .lock()
         .map_err(|e| format!("Failed to lock recorder: {}", e))?;
-    recorder.init_session(device_identifier, recordings_dir, recording_id, sample_rate)
+    recorder.init_session(
+        device_identifier,
+        recordings_dir,
+        recording_id,
+        sample_rate,
+        streaming.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
