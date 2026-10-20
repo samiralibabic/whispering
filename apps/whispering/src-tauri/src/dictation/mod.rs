@@ -12,6 +12,7 @@
 
 pub mod audio;
 pub mod chunker;
+pub mod engines;
 pub mod pipeline;
 
 pub use chunker::{ChunkerConfig, CutReason};

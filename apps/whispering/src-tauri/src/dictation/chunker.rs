@@ -31,14 +31,18 @@ pub struct ChunkerConfig {
     pub min_quiet_rms: f32,
 }
 
+/// Tuned on Whisper large-v3-turbo, which pads every call to a 30 s window: a
+/// call costs about the same for 1 s or 28 s of audio, so long chunks mean
+/// fewer calls and fewer seams, while the work left after Stop stays one call.
+/// A 600 ms pause avoids cutting inside hesitations and self-corrections.
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
             frame_ms: 30,
-            min_chunk_ms: 4_000,
-            max_chunk_ms: 15_000,
-            min_pause_ms: 400,
-            forced_cut_search_ms: 2_000,
+            min_chunk_ms: 12_000,
+            max_chunk_ms: 28_000,
+            min_pause_ms: 600,
+            forced_cut_search_ms: 3_000,
             quiet_ratio: 3.0,
             activity_ratio: 2.0,
             min_quiet_rms: 3e-4,
@@ -255,6 +259,17 @@ mod tests {
 
     const RATE: usize = TARGET_SAMPLE_RATE as usize;
 
+    /// Short limits keep the synthetic signals small; behavior does not depend on the values.
+    fn short_config() -> ChunkerConfig {
+        ChunkerConfig {
+            min_chunk_ms: 4_000,
+            max_chunk_ms: 15_000,
+            min_pause_ms: 400,
+            forced_cut_search_ms: 2_000,
+            ..ChunkerConfig::default()
+        }
+    }
+
     /// Deterministic pseudo-random noise so tests need no extra crates.
     struct Noise(u32);
 
@@ -315,7 +330,7 @@ mod tests {
             pattern.push((0.8, 0.0));
         }
         let input = signal(&pattern);
-        let chunks = chunk_all(&input, 512, ChunkerConfig::default());
+        let chunks = chunk_all(&input, 512, short_config());
 
         assert_covers(&input, &chunks);
         let (last, rest) = chunks.split_last().unwrap();
@@ -335,7 +350,7 @@ mod tests {
     #[test]
     fn continuous_speech_is_force_cut_before_max_length() {
         let input = signal(&[(40.0, 0.1)]);
-        let chunks = chunk_all(&input, 1_000, ChunkerConfig::default());
+        let chunks = chunk_all(&input, 1_000, short_config());
 
         assert_covers(&input, &chunks);
         for chunk in &chunks[..chunks.len() - 1] {
@@ -349,7 +364,7 @@ mod tests {
     fn whispered_speech_counts_as_activity_and_silence_does_not() {
         // Room noise is ±0.001; whispering here is a 0.006 amplitude tone.
         let input = signal(&[(5.0, 0.0), (1.0, 0.0), (5.0, 0.006), (1.0, 0.0)]);
-        let chunks = chunk_all(&input, 480, ChunkerConfig::default());
+        let chunks = chunk_all(&input, 480, short_config());
 
         assert_covers(&input, &chunks);
         assert!(chunks.len() >= 2);
@@ -368,8 +383,8 @@ mod tests {
     #[test]
     fn slice_size_does_not_change_cut_points() {
         let input = signal(&[(6.0, 0.1), (0.6, 0.0), (9.0, 0.08), (1.0, 0.0), (20.0, 0.1)]);
-        let a = chunk_all(&input, 7, ChunkerConfig::default());
-        let b = chunk_all(&input, input.len(), ChunkerConfig::default());
+        let a = chunk_all(&input, 7, short_config());
+        let b = chunk_all(&input, input.len(), short_config());
         let bounds = |chunks: &[AudioChunk]| {
             chunks
                 .iter()
@@ -382,7 +397,7 @@ mod tests {
     #[test]
     fn short_recording_becomes_a_single_chunk() {
         let input = signal(&[(2.5, 0.1)]);
-        let chunks = chunk_all(&input, 300, ChunkerConfig::default());
+        let chunks = chunk_all(&input, 300, short_config());
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].cut, CutReason::EndOfStream);
         assert!(chunks[0].has_activity);
@@ -390,8 +405,18 @@ mod tests {
     }
 
     #[test]
+    fn default_chunks_fit_in_one_whisper_window() {
+        let config = ChunkerConfig::default();
+        assert!(config.min_chunk_ms < config.max_chunk_ms);
+        assert!(
+            config.max_chunk_ms <= 30_000,
+            "Whisper would split the chunk itself"
+        );
+    }
+
+    #[test]
     fn empty_input_produces_no_chunks() {
-        let mut chunker = Chunker::new(ChunkerConfig::default());
+        let mut chunker = Chunker::new(short_config());
         assert!(chunker.push(&[]).is_empty());
         assert!(chunker.finish().is_none());
     }

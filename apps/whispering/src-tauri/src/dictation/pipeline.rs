@@ -23,6 +23,13 @@ impl<E: AsrEngine + ?Sized> AsrEngine for Box<E> {
     }
 }
 
+/// Lets a caller lend an engine to a pipeline and keep using it afterwards.
+impl<E: AsrEngine + ?Sized> AsrEngine for &mut E {
+    fn transcribe(&mut self, samples: &[f32], prompt: Option<&str>) -> Result<String, String> {
+        (**self).transcribe(samples, prompt)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
     pub chunker: ChunkerConfig,
@@ -240,6 +247,19 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
+    /// Short chunks so each test phrase becomes its own chunk.
+    fn short_config() -> PipelineConfig {
+        PipelineConfig {
+            chunker: ChunkerConfig {
+                min_chunk_ms: 4_000,
+                max_chunk_ms: 15_000,
+                min_pause_ms: 400,
+                ..ChunkerConfig::default()
+            },
+            ..PipelineConfig::default()
+        }
+    }
+
     /// Records what it was asked to transcribe and answers "w{index}".
     #[derive(Clone, Default)]
     struct FakeEngine {
@@ -293,7 +313,7 @@ mod tests {
         let engine = FakeEngine::default();
         let input = stereo_phrases(16_000, 6, 4.5);
         let mut pipeline =
-            DictationPipeline::new(engine.clone(), 16_000, 2, PipelineConfig::default()).unwrap();
+            DictationPipeline::new(engine.clone(), 16_000, 2, short_config()).unwrap();
         for part in input.chunks(320) {
             pipeline.push(part).unwrap();
         }
@@ -318,7 +338,7 @@ mod tests {
             FakeEngine::default(),
             48_000,
             &stereo_phrases(48_000, 3, 5.0),
-            PipelineConfig::default(),
+            short_config(),
         )
         .unwrap();
         assert_eq!(outcome.metrics.audio_ms, 3 * 6_000);
@@ -329,7 +349,7 @@ mod tests {
         let engine = FakeEngine::default();
         let config = PipelineConfig {
             base_prompt: Some("Epicenter, Tauri".to_string()),
-            ..PipelineConfig::default()
+            ..short_config()
         };
         run(
             engine.clone(),
@@ -350,7 +370,7 @@ mod tests {
         let engine = FakeEngine::default();
         let config = PipelineConfig {
             context_chars: 0,
-            ..PipelineConfig::default()
+            ..short_config()
         };
         run(
             engine.clone(),
@@ -378,7 +398,7 @@ mod tests {
             })
             .collect();
         input.extend(stereo_phrases(16_000, 1, 3.0));
-        let outcome = run(engine.clone(), 16_000, &input, PipelineConfig::default()).unwrap();
+        let outcome = run(engine.clone(), 16_000, &input, short_config()).unwrap();
 
         assert!(outcome.metrics.skipped_chunks >= 1);
         assert_eq!(
@@ -398,7 +418,7 @@ mod tests {
             engine,
             16_000,
             &stereo_phrases(16_000, 4, 4.5),
-            PipelineConfig::default(),
+            short_config(),
         )
         .unwrap_err();
         assert!(error.contains("model crashed"), "{}", error);
@@ -408,10 +428,9 @@ mod tests {
     fn progress_reports_every_chunk_without_text() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
-        let mut pipeline =
-            DictationPipeline::new(FakeEngine::default(), 16_000, 2, PipelineConfig::default())
-                .unwrap()
-                .on_progress(move |info| sink.lock().unwrap().push(info.index));
+        let mut pipeline = DictationPipeline::new(FakeEngine::default(), 16_000, 2, short_config())
+            .unwrap()
+            .on_progress(move |info| sink.lock().unwrap().push(info.index));
         pipeline.push(&stereo_phrases(16_000, 4, 4.5)).unwrap();
         let outcome = pipeline.finish().unwrap();
         let expected: Vec<usize> = (0..outcome.segments.len()).collect();
