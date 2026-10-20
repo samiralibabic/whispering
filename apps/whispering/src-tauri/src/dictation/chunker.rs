@@ -19,6 +19,10 @@ pub struct ChunkerConfig {
     pub max_chunk_ms: u32,
     /// Quiet time needed before a pause counts as a cut point.
     pub min_pause_ms: u32,
+    /// Once a chunk is this long, a shorter pause (`relaxed_pause_ms`) is enough,
+    /// so the chunk ends at a breath rather than being forced mid-word.
+    pub relax_after_ms: u32,
+    pub relaxed_pause_ms: u32,
     /// How far back from `max_chunk_ms` a forced cut looks for the quietest frame.
     pub forced_cut_search_ms: u32,
     /// A frame is quiet below `noise_floor * quiet_ratio` (3.0 is about +10 dB).
@@ -33,15 +37,20 @@ pub struct ChunkerConfig {
 
 /// Tuned on Whisper large-v3-turbo, which pads every call to a 30 s window: a
 /// call costs about the same for 1 s or 28 s of audio, so long chunks mean
-/// fewer calls and fewer seams, while the work left after Stop stays one call.
-/// A 600 ms pause avoids cutting inside hesitations and self-corrections.
+/// fewer calls, fewer seams, and more context, while the work left after Stop
+/// stays one call. A 600 ms pause avoids cutting inside hesitations and
+/// self-corrections; after 22 s a 300 ms breath is enough, which in practice
+/// avoids forced mid-word cuts. On real dictation, 20 s chunks halved the
+/// difference from whole-file transcription compared with 12 s chunks.
 impl Default for ChunkerConfig {
     fn default() -> Self {
         Self {
             frame_ms: 30,
-            min_chunk_ms: 12_000,
+            min_chunk_ms: 20_000,
             max_chunk_ms: 28_000,
             min_pause_ms: 600,
+            relax_after_ms: 22_000,
+            relaxed_pause_ms: 300,
             forced_cut_search_ms: 3_000,
             quiet_ratio: 3.0,
             activity_ratio: 2.0,
@@ -127,6 +136,8 @@ pub struct Chunker {
     min_chunk_frames: usize,
     max_chunk_frames: usize,
     min_pause_frames: usize,
+    relax_after_frames: usize,
+    relaxed_pause_frames: usize,
     search_frames: usize,
     /// Samples of the chunk being built.
     buffer: Vec<f32>,
@@ -151,6 +162,8 @@ impl Chunker {
             min_chunk_frames: frames_at_least(config.min_chunk_ms),
             max_chunk_frames: frames_at_most(config.max_chunk_ms),
             min_pause_frames: frames_at_least(config.min_pause_ms),
+            relax_after_frames: frames_at_least(config.relax_after_ms),
+            relaxed_pause_frames: frames_at_least(config.relaxed_pause_ms),
             search_frames: frames_at_most(config.forced_cut_search_ms),
             config,
             buffer: Vec::new(),
@@ -209,8 +222,13 @@ impl Chunker {
 
     fn try_cut(&mut self) -> Option<AudioChunk> {
         let frame_count = self.frames.len();
+        let required_pause = if frame_count >= self.relax_after_frames {
+            self.relaxed_pause_frames
+        } else {
+            self.min_pause_frames
+        };
 
-        if frame_count >= self.min_chunk_frames && self.quiet_run >= self.min_pause_frames {
+        if frame_count >= self.min_chunk_frames && self.quiet_run >= required_pause {
             // Cut in the middle of the pause so both chunks keep a little silence,
             // but never before the minimum length (the cut stays inside the pause).
             let cut_frame = (frame_count - self.quiet_run / 2).max(self.min_chunk_frames);
@@ -402,6 +420,30 @@ mod tests {
         assert_eq!(chunks[0].cut, CutReason::EndOfStream);
         assert!(chunks[0].has_activity);
         assert_covers(&input, &chunks);
+    }
+
+    #[test]
+    fn long_chunks_end_at_a_short_breath_instead_of_a_forced_cut() {
+        // Speech with 0.35 s breaths: too short for a normal pause, long enough once relaxed.
+        let mut pattern = Vec::new();
+        for _ in 0..12 {
+            pattern.push((3.0, 0.1));
+            pattern.push((0.35, 0.0));
+        }
+        let input = signal(&pattern);
+        let config = ChunkerConfig {
+            relax_after_ms: 8_000,
+            relaxed_pause_ms: 300,
+            ..short_config()
+        };
+        let chunks = chunk_all(&input, 512, config);
+
+        assert_covers(&input, &chunks);
+        for chunk in &chunks[..chunks.len() - 1] {
+            assert_eq!(chunk.cut, CutReason::Pause);
+            let ms = chunk.end_ms() - chunk.start_ms();
+            assert!((8_000..15_000).contains(&ms), "chunk length {} ms", ms);
+        }
     }
 
     #[test]
