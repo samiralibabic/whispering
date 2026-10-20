@@ -1,13 +1,13 @@
 mod error;
 mod model_manager;
 
-use error::TranscriptionError;
+pub use error::TranscriptionError;
 pub use model_manager::ModelManager;
 use log::{debug, error, info, warn};
 use std::io::Write;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "windows"))]
 use transcribe_rs::engines::moonshine::MoonshineModelParams;
 use transcribe_rs::{
@@ -521,11 +521,34 @@ pub async fn transcribe_audio_whisper(
         return Ok(String::new());
     }
 
+    let transcript = transcribe_samples_whisper(
+        &model_manager,
+        Path::new(&model_path),
+        samples,
+        language,
+        initial_prompt,
+    )?;
+    info!(
+        "[Transcription] Whisper transcription complete: characters={}",
+        transcript.len()
+    );
+    Ok(transcript)
+}
+
+/// Transcribes 16 kHz mono samples with the cached Whisper engine, loading it if needed.
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn transcribe_samples_whisper(
+    model_manager: &ModelManager,
+    model_path: &Path,
+    samples: Vec<f32>,
+    language: Option<String>,
+    initial_prompt: Option<String>,
+) -> Result<String, TranscriptionError> {
     // Get or load the model using the persistent model manager
     let engine_arc = model_manager
-        .get_or_load_whisper(PathBuf::from(&model_path))
+        .get_or_load_whisper(model_path.to_path_buf())
         .map_err(|e| TranscriptionError::ModelLoadError { message: e })?;
-    debug!("[Transcription] Whisper model ready: {}", model_path);
+    debug!("[Transcription] Whisper model ready: {}", model_path.display());
 
     // Configure inference parameters
     let mut params = WhisperInferenceParams::default();
@@ -573,12 +596,20 @@ pub async fn transcribe_audio_whisper(
             })?
     };
 
-    let transcript = result.text.trim().to_string();
-    info!(
-        "[Transcription] Whisper transcription complete: characters={}",
-        transcript.len()
-    );
-    Ok(transcript)
+    Ok(result.text.trim().to_string())
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn transcribe_samples_whisper(
+    _model_manager: &ModelManager,
+    _model_path: &Path,
+    _samples: Vec<f32>,
+    _language: Option<String>,
+    _initial_prompt: Option<String>,
+) -> Result<String, TranscriptionError> {
+    Err(TranscriptionError::TranscriptionError {
+        message: "Whisper C++ is not available on Windows due to build compatibility issues. Please use Parakeet for local transcription.".to_string(),
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -627,11 +658,26 @@ pub async fn transcribe_audio_parakeet(
         return Ok(String::new());
     }
 
+    let transcript =
+        transcribe_samples_parakeet(&model_manager, Path::new(&model_path), samples)?;
+    info!(
+        "[Transcription] Parakeet transcription complete: characters={}",
+        transcript.len()
+    );
+    Ok(transcript)
+}
+
+/// Transcribes 16 kHz mono samples with the cached Parakeet engine, loading it if needed.
+pub(crate) fn transcribe_samples_parakeet(
+    model_manager: &ModelManager,
+    model_path: &Path,
+    samples: Vec<f32>,
+) -> Result<String, TranscriptionError> {
     // Get or load the model using the persistent model manager
     let engine_arc = model_manager
-        .get_or_load_parakeet(PathBuf::from(&model_path))
+        .get_or_load_parakeet(model_path.to_path_buf())
         .map_err(|e| TranscriptionError::ModelLoadError { message: e })?;
-    debug!("[Transcription] Parakeet model ready: {}", model_path);
+    debug!("[Transcription] Parakeet model ready: {}", model_path.display());
 
     let params = ParakeetInferenceParams {
         timestamp_granularity: TimestampGranularity::Segment,
@@ -672,12 +718,7 @@ pub async fn transcribe_audio_parakeet(
             })?
     };
 
-    let transcript = result.text.trim().to_string();
-    info!(
-        "[Transcription] Parakeet transcription complete: characters={}",
-        transcript.len()
-    );
-    Ok(transcript)
+    Ok(result.text.trim().to_string())
 }
 
 #[cfg(not(target_os = "windows"))]

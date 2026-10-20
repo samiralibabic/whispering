@@ -30,6 +30,8 @@ impl Engine {
     }
 }
 
+/// Clones share the same cached engine, so a background thread can hold its own handle.
+#[derive(Clone)]
 pub struct ModelManager {
     engine: Arc<Mutex<Option<Engine>>>,
     current_model_path: Arc<Mutex<Option<PathBuf>>>,
