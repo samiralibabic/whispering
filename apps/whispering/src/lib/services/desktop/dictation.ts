@@ -27,15 +27,24 @@ export type DictationEngine =
 	| { kind: 'whispercpp'; modelPath: string; language: string | null }
 	| { kind: 'parakeet'; modelPath: string };
 
-/** Progress for one chunk. Mirrors `SegmentInfo`; carries no transcript text. */
-export type DictationProgress = {
-	index: number;
-	startMs: number;
-	endMs: number;
-	cut: 'pause' | 'forced' | 'endOfStream';
-	skipped: boolean;
-	inferenceMs: number;
-};
+/** What a running session reports. Mirrors `DictationEvent`; carries no transcript text. */
+export type DictationEvent =
+	| {
+			/** A chunk was transcribed or skipped. */
+			type: 'segment';
+			index: number;
+			startMs: number;
+			endMs: number;
+			cut: 'pause' | 'forced' | 'endOfStream';
+			skipped: boolean;
+			inferenceMs: number;
+	  }
+	| {
+			/** The voice is barely louder than the background. Sent at most once. */
+			type: 'quietVoice';
+			marginDb: number;
+			atMs: number;
+	  };
 
 export type DictationMetrics = {
 	audioMs: number;
@@ -45,6 +54,10 @@ export type DictationMetrics = {
 	inferenceMsTotal: number;
 	inferenceMsMax: number;
 	finishMs: number;
+	/** How far the voice rose above the background noise; null if too little was heard. */
+	voiceMarginDb: number | null;
+	/** The recording holds speech that was barely louder than the background. */
+	quietVoice: boolean;
 };
 
 export type DictationResult = { text: string; metrics: DictationMetrics };
@@ -60,14 +73,14 @@ export const DictationServiceLive = {
 	start: ({
 		engine,
 		prompt,
-		onProgress,
+		onEvent,
 	}: {
 		engine: DictationEngine;
 		prompt: string | null;
-		onProgress: (progress: DictationProgress) => void;
+		onEvent: (event: DictationEvent) => void;
 	}) => {
-		const channel = new Channel<DictationProgress>();
-		channel.onmessage = onProgress;
+		const channel = new Channel<DictationEvent>();
+		channel.onmessage = onEvent;
 		return tryAsync({
 			try: () =>
 				invoke<void>('start_dictation_session', {

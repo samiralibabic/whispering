@@ -6,6 +6,7 @@ import { desktopServices } from '$lib/services/desktop';
 import type { DictationEngine } from '$lib/services/desktop/dictation';
 import { deviceConfig } from '$lib/state/device-config.svelte';
 import { settings } from '$lib/state/settings.svelte';
+import { notify } from './notify';
 import { transcribeBlob } from './transcription';
 
 /**
@@ -49,8 +50,9 @@ export function streamingEngine(): DictationEngine | null {
 
 /**
  * Starts transcribing the current recording. Progress quietly updates the
- * recording toast. Returns false when the session could not start; the
- * recording continues and is transcribed after Stop as usual.
+ * recording toast; a voice barely above the background noise gets one
+ * warning. Returns false when the session could not start; the recording
+ * continues and is transcribed after Stop as usual.
  */
 export async function startStreaming({
 	engine,
@@ -63,16 +65,30 @@ export async function startStreaming({
 	const { error } = await desktopServices.dictation.start({
 		engine,
 		prompt: settings.get('transcription.prompt') || null,
-		onProgress: (progress) => {
-			if (progress.skipped) return;
-			transcribed += 1;
-			// Toast only: no OS notification or notification log entry per chunk.
-			services.toast.show({
-				id: toastId,
-				variant: 'success',
-				title: '🎙️ Whispering is recording...',
-				description: `Transcribing as you speak: ${transcribed} ${transcribed === 1 ? 'part' : 'parts'} done`,
-			});
+		onEvent: (event) => {
+			switch (event.type) {
+				case 'segment': {
+					if (event.skipped) return;
+					transcribed += 1;
+					// Toast only: no OS notification or notification log entry per chunk.
+					services.toast.show({
+						id: toastId,
+						variant: 'success',
+						title: '🎙️ Whispering is recording...',
+						description: `Transcribing as you speak: ${transcribed} ${transcribed === 1 ? 'part' : 'parts'} done`,
+					});
+					return;
+				}
+				case 'quietVoice': {
+					// Sent at most once per recording, so it may reach the OS too.
+					notify.warning({
+						title: '🎙️ Hard to hear you',
+						description:
+							'Your voice is barely louder than the background noise, so the text may come out wrong. Speak up or move closer to the microphone.',
+					});
+					return;
+				}
+			}
 		},
 	});
 	if (error) {
@@ -119,5 +135,13 @@ export async function streamedTranscriptOrBatch(
 		return transcribeBlob(blob);
 	}
 	console.info('[Dictation] streamed transcript ready', data.metrics);
+	if (data.metrics.quietVoice) {
+		services.toast.show({
+			variant: 'warning',
+			title: '⚠️ Recorded very quietly',
+			description:
+				'Your voice was barely louder than the background noise. Check the text before you send it.',
+		});
+	}
 	return Ok(data.text);
 }

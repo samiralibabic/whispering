@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use log::{info, warn};
 
 use super::pipeline::{
-    AsrEngine, DictationOutcome, DictationPipeline, PipelineConfig, SegmentInfo,
+    AsrEngine, DictationEvent, DictationOutcome, DictationPipeline, PipelineConfig,
 };
 use crate::recorder::tap::TapReader;
 
@@ -43,12 +43,12 @@ impl DictationSession {
         reader: TapReader,
         load_engine: impl FnOnce() -> Result<BoxedEngine, String> + Send + 'static,
         config: PipelineConfig,
-        on_progress: impl FnMut(&SegmentInfo) + Send + 'static,
+        on_event: impl FnMut(&DictationEvent) + Send + 'static,
     ) -> Result<Self, String> {
         let (control, control_rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("dictation".to_string())
-            .spawn(move || run(reader, load_engine, config, on_progress, control_rx))
+            .spawn(move || run(reader, load_engine, config, on_event, control_rx))
             .map_err(|e| format!("Failed to start dictation thread: {}", e))?;
         Ok(Self {
             control,
@@ -84,7 +84,7 @@ fn run(
     mut reader: TapReader,
     load_engine: impl FnOnce() -> Result<BoxedEngine, String>,
     config: PipelineConfig,
-    on_progress: impl FnMut(&SegmentInfo) + Send + 'static,
+    on_event: impl FnMut(&DictationEvent) + Send + 'static,
     control: mpsc::Receiver<Control>,
 ) {
     let loaded = Instant::now();
@@ -92,7 +92,7 @@ fn run(
         .and_then(|engine| {
             DictationPipeline::new(engine, reader.sample_rate, reader.channels, config)
         })
-        .map(|pipeline| pipeline.on_progress(on_progress));
+        .map(|pipeline| pipeline.on_event(on_event));
     match &pipeline {
         Ok(_) => info!(
             "[Dictation] engine ready in {} ms",

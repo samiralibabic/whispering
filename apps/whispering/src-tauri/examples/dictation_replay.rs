@@ -30,7 +30,8 @@ use std::time::Instant;
 use whispering_lib::dictation::audio::MonoResampler;
 use whispering_lib::dictation::engines::EngineChoice;
 use whispering_lib::dictation::{
-    AsrEngine, ChunkerConfig, CutReason, DictationPipeline, PipelineConfig, SegmentInfo,
+    AsrEngine, ChunkerConfig, CutReason, DictationEvent, DictationPipeline, PipelineConfig,
+    SegmentInfo,
 };
 use whispering_lib::transcription::ModelManager;
 
@@ -247,11 +248,19 @@ fn replay_file(
         chunker: args.chunker.clone(),
         base_prompt: args.prompt.clone(),
         context_chars: args.context_chars,
+        ..PipelineConfig::default()
     };
 
     // Feed 20 ms slices, like the capture callback would.
     let slice = (rate as usize / 50) * channels as usize;
-    let mut pipeline = DictationPipeline::new(&mut **engine, rate, channels, config)?;
+    let warned_at = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let sink = warned_at.clone();
+    let mut pipeline =
+        DictationPipeline::new(&mut **engine, rate, channels, config)?.on_event(move |event| {
+            if let DictationEvent::QuietVoice { at_ms, .. } = event {
+                *sink.lock().unwrap() = Some(*at_ms);
+            }
+        });
     let started = Instant::now();
     for part in samples.chunks(slice) {
         pipeline.push(part)?;
@@ -297,6 +306,17 @@ fn replay_file(
         m.finish_ms,
         simulated_stop_latency_ms(&outcome.segments, m.audio_ms),
         wall_ms
+    );
+    let warned_at = *warned_at.lock().unwrap();
+    println!(
+        "   voice above noise {}, quiet warning: {}, quiet note after Stop: {}",
+        m.voice_margin_db
+            .map_or("n/a".to_string(), |db| format!("{:.1} dB", db)),
+        warned_at.map_or("no".to_string(), |ms| format!(
+            "at {:.1} s",
+            ms as f64 / 1000.0
+        )),
+        if m.quiet_voice { "yes" } else { "no" }
     );
 
     if args.compare_batch {

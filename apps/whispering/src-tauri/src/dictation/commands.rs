@@ -17,7 +17,7 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use super::engines::EngineChoice;
-use super::pipeline::{DictationMetrics, PipelineConfig, SegmentInfo};
+use super::pipeline::{DictationEvent, DictationMetrics, PipelineConfig};
 use super::session::DictationSession;
 use crate::recorder::AppData;
 use crate::transcription::ModelManager;
@@ -62,7 +62,7 @@ fn lock_session(
 pub async fn start_dictation_session(
     engine: EngineChoice,
     prompt: Option<String>,
-    on_progress: Channel<SegmentInfo>,
+    on_progress: Channel<DictationEvent>,
     recorder: State<'_, AppData>,
     dictation: State<'_, DictationState>,
     model_manager: State<'_, ModelManager>,
@@ -87,8 +87,8 @@ pub async fn start_dictation_session(
         reader,
         move || engine.load(model_manager),
         config,
-        move |info| {
-            let _ = on_progress.send(info.clone());
+        move |event| {
+            let _ = on_progress.send(event.clone());
         },
     )
     .map_err(|message| DictationError::SessionFailed { message })?;

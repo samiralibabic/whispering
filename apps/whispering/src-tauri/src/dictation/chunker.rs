@@ -150,6 +150,47 @@ impl NoiseFloor {
     }
 }
 
+/// How far frames with activity rise above the noise floor, in 0.5 dB steps,
+/// over the whole recording. Speech that is barely above the background
+/// (whispering next to a fan) is hard to transcribe, so this feeds the
+/// quiet-voice warning.
+#[derive(Debug, Clone)]
+struct VoiceLevel {
+    bins: Vec<u32>,
+    count: u32,
+}
+
+impl VoiceLevel {
+    const BIN_DB: f32 = 0.5;
+    const BINS: usize = 160;
+
+    fn new() -> Self {
+        Self {
+            bins: vec![0; Self::BINS],
+            count: 0,
+        }
+    }
+
+    fn add(&mut self, margin_db: f32) {
+        let bin = ((margin_db.max(0.0) / Self::BIN_DB) as usize).min(Self::BINS - 1);
+        self.bins[bin] += 1;
+        self.count += 1;
+    }
+
+    /// The margin that `fraction` of active frames stay below.
+    fn percentile(&self, fraction: f32) -> f32 {
+        let target = (self.count as f32 * fraction).ceil() as u32;
+        let mut seen = 0;
+        for (bin, &n) in self.bins.iter().enumerate() {
+            seen += n;
+            if seen >= target.max(1) {
+                return (bin as f32 + 0.5) * Self::BIN_DB;
+            }
+        }
+        Self::BINS as f32 * Self::BIN_DB
+    }
+}
+
 pub struct Chunker {
     config: ChunkerConfig,
     frame_len: usize,
@@ -172,10 +213,14 @@ pub struct Chunker {
     /// Consecutive quiet frames at the end of `frames`.
     quiet_run: usize,
     noise_floor: NoiseFloor,
+    voice_level: VoiceLevel,
     next_index: usize,
 }
 
 impl Chunker {
+    /// Active audio needed before the voice level is meaningful (about one second).
+    const MIN_LEVEL_FRAMES: u32 = 33;
+
     pub fn new(config: ChunkerConfig) -> Self {
         let frame_len = (TARGET_SAMPLE_RATE * config.frame_ms / 1_000) as usize;
         // Minimums round up and maximums round down, so the limits hold exactly.
@@ -199,8 +244,30 @@ impl Chunker {
             frames: Vec::new(),
             quiet_run: 0,
             noise_floor: NoiseFloor { level: None },
+            voice_level: VoiceLevel::new(),
             next_index: 0,
         }
+    }
+
+    /// How far the speaker's voice rises above the background noise, in dB:
+    /// the 90th percentile over all frames with activity so far. `None` until
+    /// about a second of activity has been heard. Silence with an occasional
+    /// noise blip also scores low, so a low value alone does not mean speech.
+    pub fn voice_margin_db(&self) -> Option<f32> {
+        (self.voice_level.count >= Self::MIN_LEVEL_FRAMES).then(|| self.voice_level.percentile(0.9))
+    }
+
+    /// Total audio received so far.
+    pub fn elapsed_ms(&self) -> u64 {
+        samples_to_ms(self.buffer_start + self.buffer.len() as u64)
+    }
+
+    /// The speech in the chunk still being built (trimmed like a finished
+    /// chunk), for a quick look before the chunk is complete.
+    pub fn pending_speech(&self) -> Option<&[f32]> {
+        let complete = self.frames.len() * self.frame_len;
+        self.speech_range(&self.frames, complete)
+            .map(|range| &self.buffer[range])
     }
 
     /// Adds samples and returns any chunks that became complete.
@@ -241,10 +308,14 @@ impl Chunker {
         let quiet_threshold = (floor * self.config.quiet_ratio).max(self.config.min_quiet_rms);
         let activity_threshold =
             (floor * self.config.activity_ratio).max(self.config.min_quiet_rms);
+        let active = rms >= activity_threshold;
+        if active {
+            self.voice_level.add(20.0 * (rms / floor).log10());
+        }
         Frame {
             rms,
             quiet: rms < quiet_threshold,
-            active: rms >= activity_threshold,
+            active,
         }
     }
 

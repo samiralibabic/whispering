@@ -19,5 +19,6 @@ pub mod session;
 
 pub use chunker::{ChunkerConfig, CutReason};
 pub use pipeline::{
-    AsrEngine, DictationMetrics, DictationOutcome, DictationPipeline, PipelineConfig, SegmentInfo,
+    AsrEngine, DictationEvent, DictationMetrics, DictationOutcome, DictationPipeline,
+    PipelineConfig, SegmentInfo,
 };
