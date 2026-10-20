@@ -1,7 +1,7 @@
 {
 	"name": "@epicenter/whispering",
 	"private": true,
-	"version": "7.13.1",
+	"version": "7.14.0",
 	"description": "Desktop and web speech-to-text with global shortcuts and AI transformations",
 	"exports": {
 		"./commands": "./src/lib/commands.ts",

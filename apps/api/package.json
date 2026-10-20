@@ -2,7 +2,7 @@
 	"name": "@epicenter/api",
 	"description": "Hub server for auth, real-time sync, and AI inference on Cloudflare Workers",
 	"private": true,
-	"version": "7.13.1",
+	"version": "7.14.0",
 	"type": "module",
 	"main": "./src/app.ts",
 	"types": "./src/app.ts",
