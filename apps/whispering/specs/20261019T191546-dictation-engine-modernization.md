@@ -1,9 +1,45 @@
 # Whispering: streaming dictation, correction learning, and reusable engine
 
-Status: Proposed. Agent handoff and implementation plan; no feature changes have been made by this document.
-Date: 2026-10-19
+Status: In progress. Slice 2 (chunked streaming ASR) shipped in 7.13.0 behind an experimental setting; see [Implementation status](#implementation-status-2026-10-20). Slices 0 and 1 were deferred by the user.
+Date: 2026-10-19 (updated 2026-10-20)
 Repository: samiralibabic/whispering (main)
 Target device for first iteration: M1 Max Mac Studio.
+
+## Implementation status (2026-10-20)
+
+The user chose to skip Slices 0 and 1 and go straight to transcribing while speaking. Their installed settings were read from the app's stores: Whisper C++ with `ggml-large-v3-turbo`, language auto, CPAL recording from a webcam mic (16 kHz stereo), and one OpenRouter `google/gemini-2.5-flash-lite` cleanup step whose output alone is pasted. They asked to leave settings alone.
+
+### What shipped
+
+```text
+CPAL callback ─┬─► WavWriter (unchanged; full recording always saved)
+               └─► rtrb lock-free ring buffer (60 s; overflow flags the session, never blocks)
+                        │
+          "dictation" thread: MonoResampler ─► Chunker ─► AsrEngine (ModelManager) ─► join
+                        │ progress (no text) over tauri::ipc::Channel ─► recording toast
+   Stop ─► finish waits for capture to end, transcribes the last chunk ─► processRecordingPipeline
+   error, overflow, or empty text ─► batch transcription of the saved WAV (old path)
+```
+
+- Rust: `src-tauri/src/dictation/` (`audio`, `chunker`, `pipeline`, `engines`, `session`, `commands`), `src-tauri/src/recorder/tap.rs`, and `examples/dictation_replay.rs` (replays WAVs through the same pipeline, compares with whole-file transcription).
+- Frontend: `services/desktop/dictation.ts`, `query/dictation.ts`, `actions.ts` (start with recording, request the transcript on Stop, cancel with recording). Per-device flag `transcription.streaming.enabled`, default off, toggle "Transcribe while recording" in Settings → Transcription for Whisper C++ and Parakeet.
+- Not a true streaming engine. `transcribe-rs` 0.2.9 and 0.3.x only expose whole-buffer APIs (0.2.9's `MoonshineStreamingEngine` runs in batch mode, and Moonshine is English-only), so the stream is cut at pauses and each chunk is transcribed while the user keeps talking.
+- Tests: 27 Rust unit tests (resampler, chunker invariants including "every sample in exactly one chunk", pipeline ordering and context, tap overflow, session stop/finish/cancel). No frontend tests yet.
+
+### Measurements (M1 Max, debug build, large-v3-turbo)
+
+- Whisper costs about 1.4 s per call whatever the chunk length (it pads to 30 s), so long chunks are nearly free and short ones waste work.
+- First live dictation, 49.5 s: four of five chunks finished while speaking; Stop to transcript 0.67 s (whole file: about 2.7 s).
+- Chunk length matters for accuracy. Against whole-file output on the same audio, 12 s chunks differed by 12.2% (errors inside chunks, from lack of context) and 20 s chunks by 4.8%; on a 3-minute stream of real dictations, 5.5% vs 5.0%. The remaining difference is mostly filler words and spellings and matches whole-file run-to-run variation. Results were deterministic across repeated runs.
+- Without relaxing the pause, 20 s chunks hit the 28 s limit and were force-cut mid-speech twice, dropping a phrase. Defaults are now 20–28 s chunks, cut at 600 ms pauses, or at a 300 ms breath after 22 s: no forced cuts in the test streams, about 1.4 s from Stop to text.
+- Passing the previous 200 characters as Whisper's prompt caused no repetitions in testing; a sentence that appeared twice turned out to be dictated twice.
+
+### Corrections to the baseline above
+
+- `ModelManager::unload_if_idle` is never called, so a loaded model stays loaded; there is no effective five-minute idle unload.
+- The code default ASR is Moonshine, and the default output settings paste the raw transcript and only copy the transformation; double insertion requires enabling `output.transformation.cursor`.
+- Batch local transcription sends audio from JS to Rust as a JSON array of bytes and runs inference inside an async command; the streaming path avoids both.
+- Building whisper.cpp needs Xcode's SDK when the Command Line Tools ship a newer macOS SDK (`SDKROOT=$(xcrun --sdk macosx --show-sdk-path)` or `DEVELOPER_DIR=/Library/Developer/CommandLineTools`).
 
 ## Objective
 
@@ -179,12 +215,12 @@ Done when: raw and transformed texts cannot both be inserted accidentally and no
 
 ### Slice 2 — Streaming ASR (P1)
 
-- [ ] Define typed session contract/events and a headless replay harness independent of Svelte/Tauri.
-- [ ] Stream PCM frames from CPAL without blocking capture, with bounded queues and segment offsets.
-- [ ] Prototype and compare at least one native streaming ASR engine against current batch Parakeet.
-- [ ] Stabilize partial/revised hypotheses, deduplicate overlap, flush on Stop; retain batch fallback.
+- [x] Define typed session contract/events and a headless replay harness independent of Svelte/Tauri. (`DictationPipeline` + `AsrEngine` trait; `examples/dictation_replay.rs`. Events carry progress only, no partial text.)
+- [x] Stream PCM frames from CPAL without blocking capture, with bounded queues and segment offsets. (`recorder/tap.rs`, 60 s ring buffer, overflow falls back to batch.)
+- [ ] Prototype and compare at least one native streaming ASR engine against current batch Parakeet. (No native streaming engine is available in `transcribe-rs`; chunked Whisper turbo shipped. Parakeet v3 benchmark pending its download.)
+- [x] Stabilize partial/revised hypotheses, deduplicate overlap, flush on Stop; retain batch fallback. (Chunks are cut at pauses, so there is no overlap to deduplicate and no partial hypotheses; final chunk flushed on Stop; batch fallback kept.)
 
-Done when: intermediate finalized speech exists during continuous manual recording, and a long session no longer requires transcribing its full duration after Stop.
+Done when: intermediate finalized speech exists during continuous manual recording, and a long session no longer requires transcribing its full duration after Stop. Met in 7.13.0 for CPAL + Whisper C++ / Parakeet; verified live for 49 s and by replay for 3 minutes. A 5–15 minute live session is still to be measured.
 
 ### Slice 3 — Parallel incremental formatting (P1)
 
@@ -215,10 +251,12 @@ Done when: a second minimal UI can start, stream, stop, subscribe to events, and
 
 - Chosen now: enhance the existing fork, keep ASR local on Mac, allow a separately configured OpenAI text-only transform, and keep future clients transport-independent.
 - Chosen now: no mandatory localhost server; implement an engine/session boundary first, then choose IPC/network deployment based on need.
-- To test: streaming ASR backend (Moonshine versus Parakeet variants), transformation model quality, partial segment cadence, and accuracy of quiet speech.
+- Chosen 2026-10-20 (user): skip Slices 0/1; ship chunked streaming ASR with the transformation still run once on Stop; keep Whisper large-v3-turbo and benchmark Parakeet v3 later; progress-only feedback while recording (no live text); setting is experimental and off by default.
+- Chosen 2026-10-20 (from measurements): chunked batch inference instead of a native streaming engine; 20–28 s chunks with pause relaxation; preceding 200 characters as Whisper context.
+- To test: Parakeet v3 versus turbo on long English/German/mixed/whispered clips, transformation latency on long transcripts (input to Slice 3), and accuracy of quiet speech.
 - To decide later: automatic background insertion versus explicit confirmation; whether post-insertion correction monitoring requires opt-in; vocabulary sync design; mobile inference minimum device; confidential hosted inference.
 - Out of scope for this effort: commercial launch, payment, server fleet, iOS app build, or legal/licensing analysis.
 
 ## Starting instruction for a coding agent
 
-Read this spec and the referenced code. Begin with Slice 0 and Slice 1, producing separate small PRs (or one scoped PR if changes are tightly coupled). Show measurements and tests. Do not implement the full streaming rewrite before confirming the actual installed settings and baseline. Maintain the spec with observed results and differences from the original plan.
+Read this spec, starting with Implementation status, and the referenced code. Slice 2 has shipped; the next candidates are a long live session and Parakeet benchmark, then Slice 3 (incremental formatting) once transformation latency on long transcripts is measured, and the remaining Slice 1 items (single insertion and fallback when the transformation fails). Use `examples/dictation_replay.rs` for any chunking or engine change and report its numbers. Maintain the spec with observed results and differences from the original plan.
