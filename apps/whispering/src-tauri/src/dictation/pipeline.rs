@@ -163,16 +163,16 @@ impl<E: AsrEngine> DictationPipeline<E> {
             start_ms: chunk.start_ms(),
             end_ms: chunk.end_ms(),
             cut: chunk.cut,
-            skipped: !chunk.has_activity,
+            skipped: !chunk.has_activity(),
             inference_ms: 0,
         };
 
-        if chunk.has_activity {
+        if let Some(speech) = chunk.speech.clone() {
             let prompt = self.prompt();
             let started = Instant::now();
             let text = self
                 .engine
-                .transcribe(&chunk.samples, prompt.as_deref())
+                .transcribe(&chunk.samples[speech], prompt.as_deref())
                 .map_err(|e| format!("Chunk {} failed: {}", chunk.index, e))?;
             info.inference_ms = started.elapsed().as_millis() as u64;
             self.texts.push(text);

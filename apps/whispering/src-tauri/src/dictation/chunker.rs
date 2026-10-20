@@ -7,6 +7,8 @@
 //! decides what to keep. Quiet or whispered speech is therefore never dropped;
 //! a chunk is only flagged as silent when no frame rises above the noise floor.
 
+use std::ops::Range;
+
 use super::audio::TARGET_SAMPLE_RATE;
 
 #[derive(Debug, Clone)]
@@ -33,6 +35,15 @@ pub struct ChunkerConfig {
     /// Lower bound for the quiet threshold, so digital silence does not make
     /// every faint sound look like speech.
     pub min_quiet_rms: f32,
+    /// Silence kept around the speech that is sent to the engine. Whisper
+    /// invents text ("Thank you.") in long silences, so the rest is trimmed.
+    pub speech_padding_ms: u32,
+    /// A burst this short after `click_gap_ms` of silence at the end of a
+    /// chunk is treated as a click (such as the stop shortcut), not speech.
+    pub click_max_ms: u32,
+    pub click_gap_ms: u32,
+    /// Chunks with less active audio than this are not transcribed.
+    pub min_speech_ms: u32,
 }
 
 /// Tuned on Whisper large-v3-turbo, which pads every call to a 30 s window: a
@@ -55,6 +66,10 @@ impl Default for ChunkerConfig {
             quiet_ratio: 3.0,
             activity_ratio: 2.0,
             min_quiet_rms: 3e-4,
+            speech_padding_ms: 300,
+            click_max_ms: 120,
+            click_gap_ms: 500,
+            min_speech_ms: 150,
         }
     }
 }
@@ -73,12 +88,17 @@ pub struct AudioChunk {
     /// Offset of the first sample in the 16 kHz stream.
     pub start_sample: u64,
     pub samples: Vec<f32>,
-    /// False when no frame rose above the noise floor (true silence).
-    pub has_activity: bool,
+    /// The part of `samples` to transcribe: the speech plus a little padding.
+    /// `None` when the chunk holds no speech, only silence or a click.
+    pub speech: Option<Range<usize>>,
     pub cut: CutReason,
 }
 
 impl AudioChunk {
+    pub fn has_activity(&self) -> bool {
+        self.speech.is_some()
+    }
+
     pub fn start_ms(&self) -> u64 {
         samples_to_ms(self.start_sample)
     }
@@ -139,6 +159,10 @@ pub struct Chunker {
     relax_after_frames: usize,
     relaxed_pause_frames: usize,
     search_frames: usize,
+    padding_samples: usize,
+    click_max_frames: usize,
+    click_gap_frames: usize,
+    min_speech_frames: usize,
     /// Samples of the chunk being built.
     buffer: Vec<f32>,
     /// Absolute offset of `buffer[0]`.
@@ -165,6 +189,10 @@ impl Chunker {
             relax_after_frames: frames_at_least(config.relax_after_ms),
             relaxed_pause_frames: frames_at_least(config.relaxed_pause_ms),
             search_frames: frames_at_most(config.forced_cut_search_ms),
+            padding_samples: (TARGET_SAMPLE_RATE * config.speech_padding_ms / 1_000) as usize,
+            click_max_frames: frames_at_most(config.click_max_ms),
+            click_gap_frames: frames_at_least(config.click_gap_ms),
+            min_speech_frames: frames_at_least(config.min_speech_ms),
             config,
             buffer: Vec::new(),
             buffer_start: 0,
@@ -261,13 +289,50 @@ impl Chunker {
         let chunk = AudioChunk {
             index: self.next_index,
             start_sample: self.buffer_start,
-            has_activity: chunk_frames.iter().any(|f| f.active),
+            speech: self.speech_range(&chunk_frames, samples.len()),
             samples,
             cut,
         };
         self.next_index += 1;
         self.buffer_start += chunk.samples.len() as u64;
         chunk
+    }
+
+    /// From the first to the last active frame, padded, ignoring a click at
+    /// the end. `None` when less than `min_speech_ms` of speech remains.
+    ///
+    /// Only the end is checked for a click: the stop shortcut is pressed while
+    /// recording, but recording starts after the start shortcut, and a short
+    /// first word ("Okay, …") must not be mistaken for one.
+    fn speech_range(&self, frames: &[Frame], sample_count: usize) -> Option<Range<usize>> {
+        let first = frames.iter().position(|f| f.active)?;
+        let mut last = frames.iter().rposition(|f| f.active)?;
+
+        // A short final burst separated from the speech by a long gap is a click.
+        loop {
+            let burst_start = (first..=last)
+                .rev()
+                .find(|&i| !frames[i].active)
+                .map_or(first, |i| i + 1);
+            let previous = (first..burst_start).rev().find(|&i| frames[i].active);
+            match previous {
+                Some(previous)
+                    if last + 1 - burst_start <= self.click_max_frames
+                        && burst_start - previous - 1 >= self.click_gap_frames =>
+                {
+                    last = previous
+                }
+                _ => break,
+            }
+        }
+
+        let active = frames[first..=last].iter().filter(|f| f.active).count();
+        if active < self.min_speech_frames {
+            return None;
+        }
+        let start = (first * self.frame_len).saturating_sub(self.padding_samples);
+        let end = ((last + 1) * self.frame_len + self.padding_samples).min(sample_count);
+        Some(start..end)
     }
 }
 
@@ -386,9 +451,9 @@ mod tests {
 
         assert_covers(&input, &chunks);
         assert!(chunks.len() >= 2);
-        assert!(!chunks[0].has_activity, "leading room noise is silence");
+        assert!(!chunks[0].has_activity(), "leading room noise is silence");
         assert!(
-            chunks.iter().skip(1).any(|c| c.has_activity),
+            chunks.iter().skip(1).any(|c| c.has_activity()),
             "whispering must be kept for transcription"
         );
         // The whispered phrase is not split: some chunk spans all of it.
@@ -418,7 +483,7 @@ mod tests {
         let chunks = chunk_all(&input, 300, short_config());
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].cut, CutReason::EndOfStream);
-        assert!(chunks[0].has_activity);
+        assert!(chunks[0].has_activity());
         assert_covers(&input, &chunks);
     }
 
@@ -444,6 +509,75 @@ mod tests {
             let ms = chunk.end_ms() - chunk.start_ms();
             assert!((8_000..15_000).contains(&ms), "chunk length {} ms", ms);
         }
+    }
+
+    /// The speech range of the single chunk a short recording produces, in ms.
+    /// Default limits, so a recording under 20 s stays one chunk.
+    fn speech_ms(segments: &[(f32, f32)]) -> Option<(u64, u64)> {
+        let input = signal(segments);
+        let chunks = chunk_all(&input, 480, ChunkerConfig::default());
+        assert_eq!(chunks.len(), 1);
+        chunks[0]
+            .speech
+            .clone()
+            .map(|r| (samples_to_ms(r.start as u64), samples_to_ms(r.end as u64)))
+    }
+
+    fn assert_near(actual: u64, expected: u64) {
+        assert!(
+            actual.abs_diff(expected) <= 60,
+            "{} ms, expected about {} ms",
+            actual,
+            expected
+        );
+    }
+
+    #[test]
+    fn trailing_silence_is_trimmed_to_the_padding() {
+        // Speech, then three seconds of silence before Stop.
+        let (start, end) = speech_ms(&[(2.0, 0.1), (3.0, 0.0)]).unwrap();
+        assert_eq!(start, 0);
+        assert_near(end, 2_300);
+    }
+
+    #[test]
+    fn leading_silence_is_trimmed_to_the_padding() {
+        let (start, end) = speech_ms(&[(2.5, 0.0), (1.5, 0.1)]).unwrap();
+        assert_near(start, 2_200);
+        assert_eq!(end, 4_000);
+    }
+
+    #[test]
+    fn a_click_after_a_gap_is_not_speech() {
+        // Speech, silence, the stop shortcut's click, a little more silence.
+        let (_, end) = speech_ms(&[(2.0, 0.1), (1.5, 0.0), (0.06, 0.5), (0.4, 0.0)]).unwrap();
+        assert_near(end, 2_300);
+    }
+
+    #[test]
+    fn a_click_alone_is_not_transcribed() {
+        assert_eq!(speech_ms(&[(1.0, 0.0), (0.06, 0.5), (1.0, 0.0)]), None);
+    }
+
+    #[test]
+    fn a_short_first_word_before_a_pause_is_kept() {
+        // "Okay, ..." spoken quickly, then a pause, then the sentence.
+        let (start, _) = speech_ms(&[(0.3, 0.0), (0.1, 0.1), (0.8, 0.0), (2.0, 0.1)]).unwrap();
+        assert_near(start, 0);
+    }
+
+    #[test]
+    fn a_short_final_word_after_a_pause_is_kept() {
+        // "... okay." with a 0.8 s pause before the 0.3 s word.
+        let (_, end) = speech_ms(&[(2.0, 0.1), (0.8, 0.0), (0.3, 0.1), (1.0, 0.0)]).unwrap();
+        assert_near(end, 3_400);
+    }
+
+    #[test]
+    fn whispered_speech_is_kept_inside_the_range() {
+        let (start, end) = speech_ms(&[(1.0, 0.0), (2.5, 0.006), (1.0, 0.0)]).unwrap();
+        assert_near(start, 700);
+        assert_near(end, 3_800);
     }
 
     #[test]
