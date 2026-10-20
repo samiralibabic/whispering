@@ -37,6 +37,9 @@ pub struct ChunkerConfig {
     pub min_quiet_rms: f32,
     /// Silence kept around the speech that is sent to the engine. Whisper
     /// invents text ("Thank you.") in long silences, so the rest is trimmed.
+    /// Soft final words often stay under the activity threshold, so the
+    /// padding must cover them: 300 ms cut "to the agent" down to "together",
+    /// while 1.5 s let Whisper invent text after a pause before Stop.
     pub speech_padding_ms: u32,
     /// A burst this short after `click_gap_ms` of silence at the end of a
     /// chunk is treated as a click (such as the stop shortcut), not speech.
@@ -66,7 +69,7 @@ impl Default for ChunkerConfig {
             quiet_ratio: 3.0,
             activity_ratio: 2.0,
             min_quiet_rms: 3e-4,
-            speech_padding_ms: 300,
+            speech_padding_ms: 1_000,
             click_max_ms: 120,
             click_gap_ms: 500,
             min_speech_ms: 150,
@@ -378,6 +381,8 @@ impl Chunker {
     fn speech_range(&self, frames: &[Frame], sample_count: usize) -> Option<Range<usize>> {
         let first = frames.iter().position(|f| f.active)?;
         let mut last = frames.iter().rposition(|f| f.active)?;
+        // The padding must not reach into a click it was trimmed from.
+        let mut end_limit = sample_count;
 
         // A short final burst separated from the speech by a long gap is a click.
         loop {
@@ -391,7 +396,8 @@ impl Chunker {
                     if last + 1 - burst_start <= self.click_max_frames
                         && burst_start - previous - 1 >= self.click_gap_frames =>
                 {
-                    last = previous
+                    last = previous;
+                    end_limit = burst_start * self.frame_len;
                 }
                 _ => break,
             }
@@ -402,7 +408,7 @@ impl Chunker {
             return None;
         }
         let start = (first * self.frame_len).saturating_sub(self.padding_samples);
-        let end = ((last + 1) * self.frame_len + self.padding_samples).min(sample_count);
+        let end = ((last + 1) * self.frame_len + self.padding_samples).min(end_limit);
         Some(start..end)
     }
 }
@@ -608,13 +614,13 @@ mod tests {
         // Speech, then three seconds of silence before Stop.
         let (start, end) = speech_ms(&[(2.0, 0.1), (3.0, 0.0)]).unwrap();
         assert_eq!(start, 0);
-        assert_near(end, 2_300);
+        assert_near(end, 3_000);
     }
 
     #[test]
     fn leading_silence_is_trimmed_to_the_padding() {
         let (start, end) = speech_ms(&[(2.5, 0.0), (1.5, 0.1)]).unwrap();
-        assert_near(start, 2_200);
+        assert_near(start, 1_500);
         assert_eq!(end, 4_000);
     }
 
@@ -622,7 +628,13 @@ mod tests {
     fn a_click_after_a_gap_is_not_speech() {
         // Speech, silence, the stop shortcut's click, a little more silence.
         let (_, end) = speech_ms(&[(2.0, 0.1), (1.5, 0.0), (0.06, 0.5), (0.4, 0.0)]).unwrap();
-        assert_near(end, 2_300);
+        assert_near(end, 3_000);
+    }
+
+    #[test]
+    fn the_padding_stops_before_a_click() {
+        let (_, end) = speech_ms(&[(2.0, 0.1), (0.6, 0.0), (0.06, 0.5), (0.4, 0.0)]).unwrap();
+        assert_near(end, 2_600);
     }
 
     #[test]
@@ -640,15 +652,15 @@ mod tests {
     #[test]
     fn a_short_final_word_after_a_pause_is_kept() {
         // "... okay." with a 0.8 s pause before the 0.3 s word.
-        let (_, end) = speech_ms(&[(2.0, 0.1), (0.8, 0.0), (0.3, 0.1), (1.0, 0.0)]).unwrap();
-        assert_near(end, 3_400);
+        let (_, end) = speech_ms(&[(2.0, 0.1), (0.8, 0.0), (0.3, 0.1), (2.0, 0.0)]).unwrap();
+        assert_near(end, 4_100);
     }
 
     #[test]
     fn whispered_speech_is_kept_inside_the_range() {
-        let (start, end) = speech_ms(&[(1.0, 0.0), (2.5, 0.006), (1.0, 0.0)]).unwrap();
-        assert_near(start, 700);
-        assert_near(end, 3_800);
+        let (start, end) = speech_ms(&[(2.0, 0.0), (2.5, 0.006), (2.0, 0.0)]).unwrap();
+        assert_near(start, 1_000);
+        assert_near(end, 5_500);
     }
 
     #[test]

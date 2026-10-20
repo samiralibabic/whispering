@@ -17,7 +17,7 @@
 //!   --prompt <text>                base prompt, like the transcription prompt setting
 //!   --context-chars <n>            preceding text passed as prompt (default 200, 0 = off)
 //!   --min-chunk-ms / --max-chunk-ms / --min-pause-ms /
-//!   --relax-after-ms / --relaxed-pause-ms <n>                chunker overrides
+//!   --relax-after-ms / --relaxed-pause-ms / --speech-padding-ms <n>  chunker overrides
 //!   --compare-batch                also transcribe each file whole and diff the results
 //!   --concat                       join all files into one stream (a stand-in for long dictation)
 //!   --show-diff                    print the word spans where chunked and batch differ
@@ -83,6 +83,7 @@ fn parse_args() -> Result<Args, String> {
             "--min-pause-ms" => args.chunker.min_pause_ms = parse_ms(&value()?)?,
             "--relax-after-ms" => args.chunker.relax_after_ms = parse_ms(&value()?)?,
             "--relaxed-pause-ms" => args.chunker.relaxed_pause_ms = parse_ms(&value()?)?,
+            "--speech-padding-ms" => args.chunker.speech_padding_ms = parse_ms(&value()?)?,
             "--compare-batch" => args.compare_batch = true,
             "--concat" => args.concat = true,
             "--show-diff" => args.show_diff = true,
