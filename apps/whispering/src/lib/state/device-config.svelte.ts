@@ -81,6 +81,8 @@ const DEVICE_DEFINITIONS = {
 	'transcription.whispercpp.modelPath': defineEntry(type('string'), ''),
 	'transcription.parakeet.modelPath': defineEntry(type('string'), ''),
 	'transcription.moonshine.modelPath': defineEntry(type('string'), ''),
+	/** Experimental: transcribe local CPAL recordings in chunks while recording. */
+	'transcription.streaming.enabled': defineEntry(type('boolean'), false),
 
 	// ── Self-hosted server URLs ───────────────────────────────────────
 	'completion.custom.baseUrl': defineEntry(

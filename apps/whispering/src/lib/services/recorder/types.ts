@@ -219,6 +219,8 @@ export type CpalRecordingParams = BaseRecordingParams & {
 	method: 'cpal';
 	outputFolder: string;
 	sampleRate: string;
+	/** Also copy audio to a tap so a dictation session can transcribe while recording. */
+	streaming: boolean;
 };
 
 /**

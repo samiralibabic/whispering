@@ -85,6 +85,7 @@ export const CpalRecorderServiceLive: RecorderService = {
 			recordingId,
 			outputFolder,
 			sampleRate,
+			streaming,
 		}: CpalRecordingParams,
 		{ sendStatus },
 	): Promise<Result<DeviceAcquisitionOutcome, RecorderError>> => {
@@ -165,6 +166,7 @@ export const CpalRecorderServiceLive: RecorderService = {
 				recordingId,
 				outputFolder,
 				sampleRate: sampleRateNum,
+				streaming,
 			},
 		);
 		if (initRecordingSessionError)

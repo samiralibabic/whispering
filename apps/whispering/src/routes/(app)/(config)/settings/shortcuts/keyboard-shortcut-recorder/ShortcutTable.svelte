@@ -29,7 +29,10 @@
 			);
 		}
 		return deviceConfig.getDefault(
-			`shortcuts.global.${commandId}` as DeviceConfigKey,
+			`shortcuts.global.${commandId}` as Extract<
+				DeviceConfigKey,
+				`shortcuts.global.${string}`
+			>,
 		);
 	}
 

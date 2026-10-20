@@ -1,9 +1,9 @@
 import { nanoid } from 'nanoid/non-secure';
 import { defineErrors } from 'wellcrafted/error';
-import { Ok } from 'wellcrafted/result';
+import { Ok, type Result } from 'wellcrafted/result';
 import { rpc } from '$lib/query';
 import { defineMutation } from '$lib/query/client';
-import { WhisperingErr } from '$lib/result';
+import { WhisperingErr, type WhisperingError } from '$lib/result';
 import { services } from '$lib/services';
 import { deviceConfig } from '$lib/state/device-config.svelte';
 import { recordings } from '$lib/state/recordings.svelte';
@@ -20,6 +20,13 @@ const ImportError = defineErrors({
 });
 
 import { delivery } from './delivery';
+import {
+	cancelStreaming,
+	finishStreaming,
+	startStreaming,
+	streamedTranscriptOrBatch,
+	streamingEngine,
+} from './dictation';
 import { notify } from './notify';
 import { recorder } from './recorder';
 import { sound } from './sound';
@@ -62,6 +69,9 @@ let manualRecordingOp: ManualRecordingOp = 'idle';
  * and consume it after startup finishes. Only set when op is 'starting'.
  */
 let pendingManualStop = false;
+
+/** True while the current manual recording is also being transcribed as it is recorded. */
+let streamingActive = false;
 
 // Internal mutations for manual recording
 const startManualRecording = defineMutation({
@@ -107,8 +117,9 @@ const startManualRecording = defineMutation({
 			description: 'Setting up your recording environment...',
 		});
 
+		const engine = streamingEngine();
 		const { data: deviceAcquisitionOutcome, error: startRecordingError } =
-			await recorder.startRecording({ toastId });
+			await recorder.startRecording({ toastId, streaming: engine !== null });
 
 		if (startRecordingError) {
 			manualRecordingOp = 'idle';
@@ -165,6 +176,10 @@ const startManualRecording = defineMutation({
 			}
 		}
 
+		streamingActive = engine
+			? await startStreaming({ engine, toastId })
+			: false;
+
 		// Track start time for duration calculation
 		manualRecordingStartTime = Date.now();
 		console.info('Recording started');
@@ -200,6 +215,11 @@ const stopManualRecording = defineMutation({
 		}
 
 		manualRecordingOp = 'stopping';
+
+		// Ask for the streamed transcript right away; it waits for the recorder to
+		// stop, so the last chunk is transcribed while the recording is saved.
+		const streamed = streamingActive ? finishStreaming() : null;
+		streamingActive = false;
 
 		const toastId = nanoid();
 		notify.loading({
@@ -252,6 +272,9 @@ const stopManualRecording = defineMutation({
 			toastId,
 			completionTitle: '✨ Recording Complete!',
 			completionDescription: 'Recording saved and session closed successfully',
+			transcribe: streamed
+				? () => streamedTranscriptOrBatch(streamed, blob)
+				: undefined,
 		});
 
 		return Ok(undefined);
@@ -424,6 +447,11 @@ export const actions = {
 			}
 			manualRecordingOp = 'canceling';
 			pendingManualStop = false;
+
+			if (streamingActive) {
+				streamingActive = false;
+				await cancelStreaming();
+			}
 
 			const toastId = nanoid();
 			notify.loading({
@@ -672,6 +700,9 @@ export const actions = {
  * When omitted (e.g., VAD recording, file uploads), a new ID is generated here using nanoid().
  * This flexibility allows different recording methods to control ID generation at the
  * appropriate point in their respective pipelines.
+ *
+ * @param transcribe - Optional source of the transcript, used when it was produced
+ * while recording (streaming dictation). Defaults to transcribing `blob`.
  */
 async function processRecordingPipeline({
 	blob,
@@ -679,12 +710,14 @@ async function processRecordingPipeline({
 	toastId,
 	completionTitle,
 	completionDescription,
+	transcribe = () => transcribeBlob(blob),
 }: {
 	blob: Blob;
 	recordingId?: string;
 	toastId: string;
 	completionTitle: string;
 	completionDescription: string;
+	transcribe?: () => Promise<Result<string, WhisperingError>>;
 }) {
 	const now = new Date().toISOString();
 	const newRecordingId = recordingId ?? nanoid();
@@ -710,7 +743,7 @@ async function processRecordingPipeline({
 	// Save metadata to workspace (instant) and audio blob to BlobStore (async)
 	recordings.set(recording);
 	const saveAudioPromise = services.blobs.audio.save(recording.id, blob);
-	const transcribePromise = transcribeBlob(blob);
+	const transcribePromise = transcribe();
 
 	// Await transcription first (latency-critical path)
 	const { data: transcribedText, error: transcribeError } =

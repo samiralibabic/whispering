@@ -68,7 +68,14 @@ export const recorder = {
 
 	startRecording: defineMutation({
 		mutationKey: recorderKeys.startRecording,
-		mutationFn: async ({ toastId }: { toastId: string }) => {
+		/** `streaming` prepares a CPAL recording for transcription while recording. */
+		mutationFn: async ({
+			toastId,
+			streaming = false,
+		}: {
+			toastId: string;
+			streaming?: boolean;
+		}) => {
 			// Generate a unique recording ID that will serve as the file name
 			const recordingId = nanoid();
 
@@ -114,6 +121,7 @@ export const recorder = {
 					),
 					outputFolder,
 					sampleRate: deviceConfig.get('recording.cpal.sampleRate'),
+					streaming,
 				},
 			} as const;
 
