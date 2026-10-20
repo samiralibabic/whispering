@@ -8,6 +8,7 @@
 	import { Input } from '@epicenter/ui/input';
 	import { Link } from '@epicenter/ui/link';
 	import * as Select from '@epicenter/ui/select';
+	import { Switch } from '@epicenter/ui/switch';
 	import { Textarea } from '@epicenter/ui/textarea';
 	import InfoIcon from '@lucide/svelte/icons/info';
 	import CopyablePre from '$lib/components/copyable/CopyablePre.svelte';
@@ -756,6 +757,32 @@
 					{/if}
 				{/if}
 			</div>
+		{/if}
+
+		{#if window.__TAURI_INTERNALS__ && (settings.get('transcription.service') === 'whispercpp' || settings.get('transcription.service') === 'parakeet')}
+			<Field.Field orientation="horizontal">
+				<Field.Content>
+					<Field.Label for="transcription.streaming.enabled">
+						Transcribe while recording
+						<Badge variant="outline" class="text-xs">Experimental</Badge>
+					</Field.Label>
+					<Field.Description>
+						Transcribes manual recordings in parts while you speak, so even
+						long dictations are ready about a second after you stop. If
+						anything goes wrong, the recording is transcribed after you stop,
+						as usual.
+						{#if deviceConfig.get('recording.method') !== 'cpal'}
+							Requires the
+							<Link href="/settings/recording">CPAL recording method</Link>.
+						{/if}
+					</Field.Description>
+				</Field.Content>
+				<Switch
+					id="transcription.streaming.enabled"
+					bind:checked={() => deviceConfig.get('transcription.streaming.enabled'),
+						(v) => deviceConfig.set('transcription.streaming.enabled', v)}
+				/>
+			</Field.Field>
 		{/if}
 
 		<!-- Audio Compression Settings -->
