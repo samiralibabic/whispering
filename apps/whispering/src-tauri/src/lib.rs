@@ -9,6 +9,8 @@ use recorder::commands::{
     get_current_recording_id, init_recording_session, start_recording, stop_recording, AppData,
 };
 
+pub mod dictation;
+
 pub mod transcription;
 use transcription::{
     transcribe_audio_moonshine, transcribe_audio_parakeet, transcribe_audio_whisper, ModelManager,
